@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI } from "@google/genai";
 import {
   SYSTEM_PROMPT,
   STERNER_RETRY_INSTRUCTION,
@@ -17,7 +17,7 @@ import type {
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "gemini-2.5-flash";
 
 const REQUIRED_KEYS: ReportSectionKey[] = [
   "proporcao",
@@ -92,8 +92,8 @@ function validateSections(value: unknown): ReportSections {
   return result as ReportSections;
 }
 
-async function callClaude(
-  client: Anthropic,
+async function callGemini(
+  client: GoogleGenAI,
   photos: Photos,
   intake: Intake,
   sterner: boolean,
@@ -106,57 +106,53 @@ async function callClaude(
     ? `${buildUserPrompt(intake)}\n\n${STERNER_RETRY_INSTRUCTION}`
     : buildUserPrompt(intake);
 
-  const response = await client.messages.create({
+  const response = await client.models.generateContent({
     model: MODEL,
-    max_tokens: 6000,
-    system: SYSTEM_PROMPT,
-    messages: [
+    contents: [
       {
         role: "user",
-        content: [
+        parts: [
           {
-            type: "text",
             text: "Fotografia 1 — frontal em repouso (frontal_rest):",
           },
           {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: frontalRest.mediaType,
+            inlineData: {
+              mimeType: frontalRest.mediaType,
               data: frontalRest.data,
             },
           },
           {
-            type: "text",
             text: "Fotografia 2 — frontal a sorrir (frontal_smile):",
           },
           {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: frontalSmile.mediaType,
+            inlineData: {
+              mimeType: frontalSmile.mediaType,
               data: frontalSmile.data,
             },
           },
-          { type: "text", text: "Fotografia 3 — perfil direito (profile):" },
+          { text: "Fotografia 3 — perfil direito (profile):" },
           {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: profile.mediaType,
+            inlineData: {
+              mimeType: profile.mediaType,
               data: profile.data,
             },
           },
-          { type: "text", text: userText },
+          { text: userText },
         ],
       },
     ],
+    config: {
+      systemInstruction: SYSTEM_PROMPT,
+      maxOutputTokens: 8000,
+      responseMimeType: "application/json",
+      temperature: 0.7,
+    },
   });
 
-  const raw = response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
+  const raw = response.text;
+  if (!raw) {
+    throw new Error("Resposta vazia do modelo.");
+  }
 
   const parsed = extractJson(raw);
   return validateSections(parsed);
@@ -199,23 +195,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, alreadyReady: true });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey =
+    process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
-      { error: "ANTHROPIC_API_KEY não configurada no servidor." },
+      {
+        error:
+          "GOOGLE_API_KEY não configurada no servidor.",
+      },
       { status: 500 },
     );
   }
 
-  const client = new Anthropic({ apiKey });
+  const client = new GoogleGenAI({ apiKey });
 
   let sections: ReportSections | null = null;
   try {
-    sections = await callClaude(client, photos, intake, false);
+    sections = await callGemini(client, photos, intake, false);
   } catch (errFirst) {
     console.error("[generate-report] tentativa 1 falhou:", errFirst);
     try {
-      sections = await callClaude(client, photos, intake, true);
+      sections = await callGemini(client, photos, intake, true);
     } catch (errSecond) {
       console.error("[generate-report] tentativa 2 falhou:", errSecond);
       return NextResponse.json(
