@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { randomUUID } from "node:crypto";
 import {
   SYSTEM_PROMPT,
   STERNER_RETRY_INSTRUCTION,
   buildUserPrompt,
 } from "@/lib/prompt";
-import { nextSerial, saveReport, getReport } from "@/lib/store";
+import { saveReport, getReport, nextSerial } from "@/lib/store";
 import type {
   Intake,
   Photos,
@@ -16,7 +15,7 @@ import type {
 } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -163,22 +162,49 @@ async function callClaude(
   return validateSections(parsed);
 }
 
-async function runGeneration(
-  id: string,
-  intake: Intake,
-  photos: Photos,
-): Promise<void> {
+export async function POST(request: Request) {
+  let payload: { id: string; intake: Intake; photos: Photos };
+  try {
+    payload = (await request.json()) as {
+      id: string;
+      intake: Intake;
+      photos: Photos;
+    };
+  } catch {
+    return NextResponse.json(
+      { error: "Pedido inválido — JSON malformado." },
+      { status: 400 },
+    );
+  }
+
+  const { id, intake, photos } = payload;
+  if (
+    !id ||
+    !photos?.frontal_rest ||
+    !photos?.frontal_smile ||
+    !photos?.profile ||
+    !intake?.firstName
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Faltam dados — id, três fotografias e o questionário são obrigatórios.",
+      },
+      { status: 400 },
+    );
+  }
+
+  const alreadyReady = getReport(id);
+  if (alreadyReady?.status === "ready") {
+    return NextResponse.json({ ok: true, alreadyReady: true });
+  }
+
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    const existing = getReport(id);
-    if (existing) {
-      saveReport({
-        ...existing,
-        status: "error",
-        error: "ANTHROPIC_API_KEY não configurada no servidor.",
-      });
-    }
-    return;
+    return NextResponse.json(
+      { error: "ANTHROPIC_API_KEY não configurada no servidor." },
+      { status: 500 },
+    );
   }
 
   const client = new Anthropic({ apiKey });
@@ -192,69 +218,26 @@ async function runGeneration(
       sections = await callClaude(client, photos, intake, true);
     } catch (errSecond) {
       console.error("[generate-report] tentativa 2 falhou:", errSecond);
-      const existing = getReport(id);
-      if (existing) {
-        saveReport({
-          ...existing,
-          status: "error",
+      return NextResponse.json(
+        {
           error:
             "Não foi possível concluir a leitura. Tente novamente dentro de instantes.",
-        });
-      }
-      return;
+        },
+        { status: 502 },
+      );
     }
   }
 
-  const existing = getReport(id);
-  if (!existing || !sections) return;
-  saveReport({
-    ...existing,
-    sections,
-    status: "ready",
-  });
-}
-
-export async function POST(request: Request) {
-  let payload: { intake: Intake; photos: Photos };
-  try {
-    payload = (await request.json()) as { intake: Intake; photos: Photos };
-  } catch {
-    return NextResponse.json(
-      { error: "Pedido inválido — JSON malformado." },
-      { status: 400 },
-    );
-  }
-
-  const { intake, photos } = payload;
-  if (
-    !photos?.frontal_rest ||
-    !photos?.frontal_smile ||
-    !photos?.profile ||
-    !intake?.firstName
-  ) {
-    return NextResponse.json(
-      {
-        error:
-          "Faltam dados — três fotografias e o questionário são obrigatórios.",
-      },
-      { status: 400 },
-    );
-  }
-
-  const id = randomUUID();
-  const serial = nextSerial();
-  const pending: StoredReport = {
+  const stored: StoredReport = {
     id,
     createdAt: new Date().toISOString(),
-    serial,
+    serial: nextSerial(),
     intake,
     photos,
-    sections: {} as ReportSections,
-    status: "pending",
+    sections: sections!,
+    status: "ready",
   };
-  saveReport(pending);
+  saveReport(stored);
 
-  void runGeneration(id, intake, photos);
-
-  return NextResponse.json({ id });
+  return NextResponse.json({ ok: true });
 }

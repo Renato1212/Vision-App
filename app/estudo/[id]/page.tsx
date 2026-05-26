@@ -1,4 +1,3 @@
-import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ReportView } from "@/components/ReportView";
 import { getReport } from "@/lib/store";
@@ -9,7 +8,24 @@ export default function EstudoPage({ params }: { params: { id: string } }) {
   const report = getReport(params.id);
 
   if (!report) {
-    notFound();
+    return (
+      <main className="min-h-screen flex items-center justify-center px-6">
+        <div className="max-w-prose text-center">
+          <p className="eyebrow mb-6">Estudo não encontrado nesta instância</p>
+          <p className="font-serif-italic text-[26px] leading-snug text-carvao mb-6">
+            Este protótipo guarda os estudos apenas na memória do servidor que
+            os gerou. Se chegou aqui depois de uma pausa, é provável que outra
+            instância tenha respondido.
+          </p>
+          <p className="text-[14px] text-travertino mb-10">
+            Reinicie o estudo a partir do início.
+          </p>
+          <Link href="/intake" className="btn-quiet">
+            Reiniciar
+          </Link>
+        </div>
+      </main>
+    );
   }
 
   if (report.status === "pending") {

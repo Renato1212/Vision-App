@@ -19,7 +19,6 @@ export function ProcessingClient({ id }: { id: string }) {
   const [phaseIndex, setPhaseIndex] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const startedAt = useRef<number>(Date.now());
-  const readyRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,47 +43,51 @@ export function ProcessingClient({ id }: { id: string }) {
   useEffect(() => {
     let cancelled = false;
 
-    async function poll() {
-      while (!cancelled) {
-        try {
-          const res = await fetch(`/api/report/${id}`, { cache: "no-store" });
-          if (res.ok) {
-            const data = (await res.json()) as {
-              status: "pending" | "ready" | "error";
-              error?: string;
-            };
-            if (data.status === "ready") {
-              readyRef.current = true;
-              const elapsed = Date.now() - startedAt.current;
-              const remaining = Math.max(0, MIN_TOTAL_MS - elapsed);
-              window.setTimeout(() => {
-                if (cancelled) return;
-                setPhaseIndex(PHASES.length - 1);
-                router.push(`/estudo/${id}`);
-              }, remaining);
-              return;
-            }
-            if (data.status === "error") {
-              setErrorMessage(
-                data.error ??
-                  "Não foi possível concluir a leitura. Tente novamente dentro de instantes.",
-              );
-              return;
-            }
-          } else if (res.status === 404) {
-            setErrorMessage(
-              "Sessão não encontrada. Reinicie o estudo a partir do início.",
-            );
-            return;
-          }
-        } catch {
-          // network blip — keep polling
+    async function run() {
+      try {
+        const stashed = window.sessionStorage.getItem(`o-estudo:${id}`);
+        if (!stashed) {
+          setErrorMessage(
+            "Os dados desta sessão não estão disponíveis neste navegador. Reinicie o estudo a partir do início.",
+          );
+          return;
         }
-        await new Promise((r) => window.setTimeout(r, 2500));
+        const { intake, photos } = JSON.parse(stashed) as {
+          intake: unknown;
+          photos: unknown;
+        };
+        const res = await fetch("/api/generate-report", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, intake, photos }),
+        });
+        if (cancelled) return;
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          setErrorMessage(
+            data.error ??
+              "Não foi possível concluir a leitura. Tente novamente dentro de instantes.",
+          );
+          return;
+        }
+        const elapsed = Date.now() - startedAt.current;
+        const remaining = Math.max(0, MIN_TOTAL_MS - elapsed);
+        window.setTimeout(() => {
+          if (cancelled) return;
+          setPhaseIndex(PHASES.length - 1);
+          router.push(`/estudo/${id}`);
+        }, remaining);
+      } catch {
+        if (cancelled) return;
+        setErrorMessage(
+          "Não foi possível contactar o servidor. Verifique a ligação e tente novamente.",
+        );
       }
     }
 
-    void poll();
+    void run();
     return () => {
       cancelled = true;
     };

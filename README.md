@@ -36,6 +36,15 @@ Open <http://localhost:3000>.
 - `react-dropzone` for uploads
 - In-memory `Map` keyed by UUID for sessions
 
+## Deployment
+
+This prototype is deployable to Vercel as-is.
+
+- `app/api/generate-report/route.ts` declares `runtime = "nodejs"` and `maxDuration = 60` so the Anthropic call does not hit Vercel's default 10s function ceiling.
+- The intake page stashes the photographs and answers in `sessionStorage` and the processing page POSTs them to `/api/generate-report` — keeping the heavy work in a single request that the serverless instance can complete before returning.
+- The single required environment variable is `ANTHROPIC_API_KEY`. Set it on the Vercel project (Production) via the dashboard or MCP. `.env.local` is gitignored and must never be committed.
+- Persistence caveat for production: reports live only in the memory of the serverless instance that generated them. A report opened in a different region, after a cold start, or from a different lambda will not be retrievable. A database is the first thing to add in the next iteration.
+
 ## Notes & out of scope
 
 - PDF export is a stub button.

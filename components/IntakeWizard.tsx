@@ -72,22 +72,15 @@ export function IntakeWizard() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const res = await fetch("/api/generate-report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intake, photos }),
-      });
-      if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(
-          data.error ?? "Não foi possível iniciar a leitura.",
-        );
-      }
-      const { id } = (await res.json()) as { id: string };
+      const id =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const payload = JSON.stringify({ intake, photos });
+      window.sessionStorage.setItem(`o-estudo:${id}`, payload);
       router.push(`/processing/${id}`);
     } catch (e) {
-      const message =
-        e instanceof Error ? e.message : "Erro inesperado.";
+      const message = e instanceof Error ? e.message : "Erro inesperado.";
       setSubmitError(message);
       setSubmitting(false);
     }
